@@ -1,0 +1,56 @@
+#### Opgave 3.1 - Forudsigelse af julehandlen ####
+# der skal bruges data fra opgave 3.2.
+## Pakker
+library(tidyverse)
+library(caret)
+library(pROC)
+
+## Opretter dataframe med de kolonner som skal bruges
+dummy_fti <- data.frame(Realvækst = FTI$Realvækst)
+dummy_fti$Retning <- ifelse(dummy_fti$Realvækst >= 0, "Op", "Ned")
+dummy_fti$FTI <- FTI$Forbrugertillidsindikator
+dummy_fti <- dummy_fti[,-1]
+
+## Tilføje Q4 værdier for Retning og FTI
+dummy_fti <- rbind(dummy_fti, c("Op", -6.53))
+
+## Konverter retning til kategorivariabel og FTI til numeric
+dummy_fti$Retning <- as.factor(dummy_fti$Retning)
+dummy_fti$FTI <- as.numeric(dummy_fti$FTI)
+## Kontroller 1'ere og 0'ere
+contrasts(dummy_fti$Retning)
+
+
+## Simpel logistisk regression
+julehandel <- glm(formula = Retning ~ FTI,
+                  data = dummy_fti, family = "binomial")
+
+ny_jul <- data.frame(FTI = -9.6)
+
+predict(julehandel, newdata = ny_jul, type = "response")
+# intercept 
+# 0.5438336 
+
+#### Opgave 3.2 - Validering af model ####
+conf_df <- data.frame(Actual = dummy_fti$Retning)
+conf_df$Predicted <- predict(julehandel, type = "response")
+conf_df$Predicted <- ifelse(conf_df$Predicted >= 0.70, "Op", "Ned")
+
+
+
+actual <- as.factor(conf_df$Actual)
+predicted <- as.factor(conf_df$Predicted)
+
+# Create confusion matrix
+conf_matrix <- confusionMatrix(actual, predicted)
+conf_matrix
+
+
+## Roc-kurve
+predict_probability <- predict(julehandel, type = "response")
+
+roc_curve <- roc(conf_df$Actual, predict_probability)
+plot(roc_curve, col = "darkmagenta")
+
+## Print Roc AUC
+roc_curve$auc ## Area under the curve: 0.7695

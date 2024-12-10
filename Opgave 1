@@ -1,0 +1,408 @@
+library(dkstat)
+library(tidyverse)
+
+#Opgave 1: Den bedste forbrugertillidsindikator 
+
+# 1.1 - Kombinationsalgoritme i R
+
+##### Henter data fra NKHC021 for at beregne realvæksten kvartalvis #######
+
+#1. Beregner realvæksten for perioden
+## Hent forbrugsdata via DST API
+Forbrug.meta <- dst_meta(table="NKHC021", lang="da")
+
+Forbrug.filter <- list(
+  FORMAAAL = "I alt",
+  PRISENHED = "2020-priser, kædede værdier",
+  SÆSON = "Sæsonkorrigeret",
+  Tid = "*")
+
+Forbrugdata <- dst_get_data(table = "NKHC021", query = Forbrug.filter)
+Forbrugdata <- Forbrugdata[,-c(1:3)]
+
+#udregner realvæskten fra kvartal til kvartal
+Forbrugdata$Realvækst <- (Forbrugdata$value / dplyr::lag(Forbrugdata$value, 4) - 1) * 100
+
+#ny dataframe i perioden 2000Q1 -2024 Q2
+Privatforbrug.periode <- as.data.frame(Forbrugdata[c(41:139),c(1,3)]) #tager for den udvalgte periode
+
+#Ændrer fra yyyy-mm-xx til yyyy-Q1
+Privatforbrug.periode$TID <- as.Date(Privatforbrug.periode$TID)  # Sørg for, at datoen er i Date format
+
+Privatforbrug.periode$TID <- paste0(year(Privatforbrug.periode$TID), "-Q", quarter(Privatforbrug.periode$TID))
+
+
+
+
+###### Henter data fra FORV1 for forbrugerforventtninger (forbrugertillidsindikator) og berenger kvartalvis gennemsnit #######
+
+#2. Korrelation og forklaringsgraf for FTI og realvækst
+#Finder data fra forbrugerforventninger i alle perioder
+alltables <- dst_get_tables(lang="da")
+dst_search("Forbrugerforventninger")
+
+FORV1.meta <- dst_meta(table = "FORV1", lang = "da")
+
+#liste med relevante filter-variabler.
+FORV1.filter <- list(
+  INDIKATOR = "*",
+  Tid = "*")
+
+FORV1Data <- dst_get_data(table = "FORV1", query = FORV1.filter, lang = "da")
+#INDIKATOR                       TID        value
+#1 Forbrugertillidsindikatoren 1974-10-01   -15
+#2 Forbrugertillidsindikatoren 1974-11-01    NA
+
+#Step 2.2: Data transformation: Dataframe med gns for kvartaler
+FORV1.wider <- pivot_wider(FORV1Data, names_from = INDIKATOR, values_from = value)
+FORV1 <- as.data.frame(FORV1.wider)
+
+#Sikrer at alle kolonner er numeriske undtagen dato som er sidste kolonne
+FORV1$TID <- as.Date(FORV1$TID) #laver årstal/kvartal til dato kolonne
+FORV1$TID <- paste(year(FORV1$TID), "Q", quarter(FORV1$TID), sep = "") #ændrer format i data-kolonne
+
+FORV1[, c(2:14)] <- lapply(FORV1[, c(2:14)], function(x) as.numeric(as.character(x))) #markerer col1:13 som numerisk
+
+gns.resultater <-list() # opretter liste til at gemme resultater i
+
+# Loop gennem hver af de 13 kolonner
+for (i in 2:14) {
+  # Beregn gennemsnit af FTI pr. kvartal for den i-te kolonne
+  FTI.gns <- aggregate(FORV1[, i] ~ TID, data = FORV1, FUN = function(x) round(mean(x, na.rm = TRUE), 2))
+  
+  # Gem resultaterne i en liste med navn baseret på kolonne-nummeret
+  gns.resultater[[paste0("FTI.gns", i)]] <- FTI.gns[, 2]  #Gem kun gennemsnitsværdierne (kolonne 2)
+}
+
+# Saml alle resultater i en ny dataframe
+FORV1.kvartal <- data.frame(TID2 = FTI.gns$TID, do.call(cbind, gns.resultater))
+
+#Tilføjer kolonne navne fra gamle data.frame
+Overskrifter <- c("Kvartal", colnames(FORV1[2:14]))
+colnames(FORV1.kvartal) <-Overskrifter
+
+#step 2.3: dataframe med realvækst og FTI for udvalgte periode
+FTI <- cbind.data.frame(Privatforbrug.periode,FORV1.kvartal[c(92:189),-1])
+colnames(FTI)[3] <- "Forbrugertillidsindikator"
+
+
+
+#----------------------------------------------------------------------------
+
+#### OLA 3 ####
+
+###### Lav liste med alle kombinationer ud fra de 12 spørgsmål fra forbrugertillid #######
+
+#ny dataframe uden fti og realvækst
+FTI2 <- FTI[,-c(1:3)]
+
+#Ganger med -1 på spørgsmål 6 og 8, for at ændre værdierne i de to spørgsmål (de er negativ korrelerede til realvæksten)
+FTI2$`Priser i dag, sammenlignet med for et år siden` = FTI2$`Priser i dag, sammenlignet med for et år siden`*-1
+FTI2$`Arbejdsløsheden om et år, sammenlignet med i dag` = FTI2$`Arbejdsløsheden om et år, sammenlignet med i dag`*-1
+
+# Liste til at gemme alle kombinationer
+kombinationer_liste <- list()
+
+for (k in 1:12) {
+  # Brug combn til at finde alle kombinationer af 'k' spørgsmål
+  comb_result <- combn(FTI2, k, simplify = FALSE)
+  
+  # Gem hver kombination som en data frame
+  kombinationer_liste[[paste0("komb_", k)]] <- comb_result
+}
+
+
+
+###### udskriv hvor mange kombinatoner der er i alt og se struktur på af de første par kombinationer #########
+# Tæl hvor mange kombinationer der er i alt
+antal_kombinationer <- sum(sapply(kombinationer_liste, length))
+print(antal_kombinationer)
+
+#Resultat: Der er i alt 4095 kombinationer af de 12 spørgsmål i alt
+
+
+
+
+###### Beregn gennemsnittet på alle rækker på de 4095 kombinationer af de 12 spørgsmål og udskriv i dataframe ######
+
+# Opret en tom liste til at samle gennemsnittene
+gennemsnit_liste <- list()
+
+# Beregner gennemsnittet for hver kombination i kombinationslisten
+for (k in 1:length(kombinationer_liste)) {
+  comb_list <- kombinationer_liste[[k]]
+  
+  for (i in seq_along(comb_list)) {
+    # Beregn række-gennemsnittet direkte på data frame
+    row_avg <- rowMeans(as.data.frame(comb_list[[i]]), na.rm = TRUE)
+    
+    # Gem gennemsnittet i gennemsnit_liste
+    gennemsnit_liste[[paste0("Komb_", k, "_", i)]] <- row_avg
+  }
+}
+
+# Konverter listen med gennemsnittene til en data frame
+gennemsnit_df <- as.data.frame(do.call(cbind, gennemsnit_liste))
+
+# Vis dataframen med gennemsnittene
+View(gennemsnit_df)
+
+
+####### Lav lineær regression på alle rækkerne ########
+
+
+##Først skal vi kombinere gennemsnit_df med realvækstkolonnen fra din data
+
+# Kombiner realvækst fra perioden med gennemsnittene
+data_for_regression <- cbind(Realvækst = Privatforbrug.periode$Realvækst, gennemsnit_df)
+
+# Vis den kombinerede data frame
+View(data_for_regression)
+
+
+####### Udfør lineær regression på alle kombinationer #######
+
+# Opret en liste til at gemme regression resultater
+regression_resultater <- list()
+
+# Loop gennem hver kombination (hver kolonne i gennemsnit_df)
+for (kombination in colnames(gennemsnit_df)) {
+  # Udfør lineær regression mellem Realvækst og den aktuelle kombination
+  model <- lm(Realvækst ~ data_for_regression[[kombination]], data = data_for_regression)
+  
+  # Gem resultaterne (du kan gemme hele modelobjektet eller bare resuméet)
+  regression_resultater[[kombination]] <- summary(model)
+}
+
+# Se resultaterne for en specifik kombination
+print(regression_resultater[["Komb_1_2"]])  # Skift "Komb_1_1" til en anden kombination efter behov
+
+
+
+
+
+
+##### Beregning af R2 for alle kombinationer #####
+
+# Opret en tom liste til at gemme R2-værdierne
+r_squared_values <- list()
+
+# Loop gennem regression resultaterne og træk R2 værdien ud for hver model
+for (kombination in names(regression_resultater)) {
+  # Træk R2 værdien fra modelresuméet
+  r_squared_values[[kombination]] <- regression_resultater[[kombination]]$r.squared
+}
+
+# Konverter listen med R2 værdier til en data frame for lettere visualisering/analyse
+r_squared_df <- as.data.frame(do.call(rbind, r_squared_values))
+
+# Tilføj kolonnenavne (hvis nødvendigt)
+colnames(r_squared_df) <- c("R2")
+
+# Print dataframen med R2 værdierne
+View(r_squared_df)
+
+
+
+
+
+
+####### Opgave 1.2 – R2 og forbrugertillidsindikatorer #######
+
+#Hvilke 10 kombinationer har den højeste R2 
+
+# Sorter R2 værdierne for at finde de højeste forklaringsgrader
+r_squared_sorted <- r_squared_df[order(-r_squared_df$R2), , drop = FALSE]
+
+# Vis de 10 kombinationer med højeste R2
+head(r_squared_sorted, 10)
+
+#Resultat af 10 kombinationer har den højeste R2 med Q3:
+#komb_5_660 0.4422791
+#Komb_4_355 0.4409806
+#Komb_6_837 0.4396783
+#Komb_7_585 0.4373602
+#Komb_6_582 0.4368706
+#Komb_5_400 0.4363631
+#Komb_5_653 0.4361526
+#Komb_6_575 0.4347062
+#Komb_7_756 0.4333005
+#Komb_4_368 0.4318695
+
+
+#Hvad er R2 for den indikatorer, der bedst forklarer variationen i den kvartalsvise årlige realvækst i husholdningernes forbrugsudgift? 
+
+#Resultat: Ud fra dette resultat kan vi se, at kombinationen "Komb_5_660" har den højeste R2-værdi på 0.4417049
+
+
+#Beregn korrelationen på "Komb_5_660":
+cor_Komb_5_660 <- cor(data_for_regression$Realvækst, data_for_regression$Komb_5_660)
+print(cor_Komb_5_660)
+
+#Diskutér om denne indikator er bedre end DI’s forbrugertillidsindikator
+
+
+#Ved at analysere forskellige kombinationer af spørgsmål fra forbrugertilliden har vi fundet, at kombinationen Komb_5_660
+#(bestående af syv specifikke spørgsmål) har den højeste forklaringsgrad med et på 0.4417. Dette betyder, at denne kombination 
+#kan forklare cirka 44.17% af variationen i realvæksten
+
+#Når vi sammenligner denne bedste kombination med DI’s forbrugertillidsindikator, viser det sig, at DI’s indikator har en R2
+#på 0.3167, hvilket betyder, at den kun forklarer 31.67% af variationen i realvæksten.
+
+
+####### Opgave 1.3 - Spørgsmål i indikatoren #######
+
+# Hent kombination nummer 551 i listen over 7-spørgsmålskombinationer (Komb_5_660)
+Komb_5_660 <- kombinationer_liste[["komb_5"]][[660]]
+
+# Udskriv navnene på de spørgsmål i kombinationen
+sporgsmaal_Komb_5_660 <- colnames(Komb_5_660)
+
+# Print spørgsmålene
+sporgsmaal_Komb_5_660
+
+#Spørgsmålene som indgår i indikatoren "Komb_5_660" som bedst forklarer variatione i forbruget er:
+#[1] "Danmarks økonomiske situation i dag, sammenlignet med for et år siden"                       
+#[2] "Priser om et år, sammenlignet med i dag"                                                     
+#[3] "Anskaffelse af større forbrugsgoder, inden for de næste 12 mdr."                             
+#[4] "Regner med at kunne spare op i de kommende 12 måneder"                                       
+#[5] "Familiens økonomiske situation lige nu: kan spare/penge slår til/ bruger mere end man tjener"
+
+
+####### Opgave 1.4 - Forudsigelser med afsæt i jeres indikatorer #######
+
+## Dataframe med vores indikator
+
+Vores_FTI <- data.frame(TID = FTI$TID)
+Vores_FTI$VFTI <- data_for_regression$Komb_5_660
+Vores_FTI$Realvækst <- FTI$Realvækst
+
+vores_reg <- lm(formula = Realvækst ~
+                  VFTI, data = Vores_FTI)
+
+summary(vores_reg)
+
+## Beregn VFTI for Q3 24, og Q4 24 (1 måned)
+
+## Q4 24
+VFTIQ4 <- mean(as.numeric(FORV1.kvartal[191, c(5, 9, 11, 13, 14)]))
+print(VFTIQ4)
+
+## Opret nyt data til predict Q4
+nyt_data <- data.frame(VFTI = c(VFTIQ4))
+
+
+predict(vores_reg, newdata = nyt_data, type = "response")
+##  1        2 
+## 1.686607 1.552937
+
+
+
+
+
+#### Opgave 1.5 #######
+
+#ny dataframe med alle mikrospørgsmål
+FTI3 <- FTI2[,c(1,2,9,11,12)]
+
+kombinationer_mikro <- list()
+
+for (k in 1:5) {
+  # Brug combn til at finde alle kombinationer af 'k' spørgsmål
+  comb_result <- combn(FTI3, k, simplify = FALSE)
+  
+  # Gem hver kombination som en data frame
+  kombinationer_mikro[[paste0("komb_", k)]] <- comb_result
+}
+
+
+###### Beregn gennemsnittet på alle rækker på de 31 kombinationer af de 5 spørgsmål og udskriv i dataframe ######
+
+# Opret en tom liste til at samle gennemsnittene
+gennemsnit_mikro <- list()
+
+# Iterér gennem hver kombinationsliste (komb_1 til komb_12)
+for (k in 1:length(kombinationer_mikro)) {
+  # Hent hver liste af kombinationer af data frames
+  comb_mikro <- kombinationer_mikro[[k]]
+  
+  # Loop gennem hver kombination i den aktuelle liste
+  for (i in 1:length(comb_mikro)) {
+    # Hent den aktuelle kombination (som er en matrix af data)
+    current_mikro <- comb_mikro[[i]]
+    
+    # Konverter data til en matrix, hvis den ikke allerede er det
+    current_mikro_matrix <- as.matrix(current_mikro)
+    
+    # Beregn række-gennemsnittet
+    row_avg <- rowMeans(current_mikro_matrix, na.rm = TRUE)
+    
+    # Tilføj gennemsnittet til vores gennemsnit_liste
+    gennemsnit_mikro[[paste0("Komb_", k, "_", i)]] <- row_avg
+  }
+}
+
+# Konverter listen med gennemsnittene til en data frame
+gennemsnit_mikro <- as.data.frame(do.call(cbind, gennemsnit_mikro))
+
+# Vis dataframen med gennemsnittene
+View(gennemsnit_mikro)
+
+####### Lav lineær regression på alle rækkerne ########
+
+
+##Først skal vi kombinere gennemsnit_df med realvækstkolonnen fra din data
+
+# Kombiner realvækst fra perioden med gennemsnittene
+mikro_for_regression <- cbind(Realvækst = Privatforbrug.periode$Realvækst, gennemsnit_mikro)
+
+# Vis den kombinerede data frame
+View(mikro_for_regression)
+
+
+####### Udfør lineær regression på alle kombinationer #######
+
+# Opret en liste til at gemme regression resultater
+regression_mikro <- list()
+
+# Loop gennem hver kombination (hver kolonne i gennemsnit_df)
+for (kombination in colnames(gennemsnit_mikro)) {
+  # Udfør lineær regression mellem Realvækst og den aktuelle kombination
+  model <- lm(Realvækst ~ mikro_for_regression[[kombination]], data = mikro_for_regression)
+  
+  # Gem resultaterne (du kan gemme hele modelobjektet eller bare resuméet)
+  regression_mikro[[kombination]] <- summary(model)
+}
+
+##### Mikro R2 
+
+# Opret en tom liste til at gemme R2-værdierne
+r_squared_mikro <- list()
+
+# Loop gennem regression resultaterne og træk R2 værdien ud for hver model
+for (kombination in names(regression_mikro)) {
+  # Træk R2 værdien fra modelresuméet
+  r_squared_mikro[[kombination]] <- regression_mikro[[kombination]]$r.squared
+}
+
+# Konverter listen med R2 værdier til en data frame for lettere visualisering/analyse
+r_squared_mikro <- as.data.frame(do.call(rbind, r_squared_mikro))
+
+# Tilføj kolonnenavne (hvis nødvendigt)
+colnames(r_squared_mikro) <- c("R2")
+
+# Print dataframen med R2 værdierne
+View(r_squared_mikro)
+
+# Hent kombination 3 i listen over 1-spørgsmålskombinationer (Komb_1_3)
+komb_1_3 <- kombinationer_mikro[["komb_1"]][[3]]
+
+# Udskriv navnene på de spørgsmål i kombinationen
+sporgsmaal_1_3 <- colnames(komb_1_3)
+
+# Print spørgsmålene
+sporgsmaal_1_3
+
+## Test:
+summary(lm(formula = Vores_FTI$Realvækst ~ FTI2$`Anskaffelse af større forbrugsgoder, inden for de næste 12 mdr.`))
+

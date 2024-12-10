@@ -1,0 +1,188 @@
+#### Opgave 4.1 ####
+
+### For de 10 bedste kombinationer vi fandt i opgave 1
+
+#Resultat af 10 kombinationer har den højeste R2:
+#Komb_5_660 0.4417049
+#Komb_4_355 0.4403798
+#Komb_6_837 0.4390678
+#Komb_7_585 0.4367412
+#Komb_6_582 0.4362860
+#Komb_5_400 0.4357517
+#Komb_5_653 0.4355240
+#Komb_6_575 0.4340686
+#Komb_7_756 0.4326847
+#Komb_4_368 0.4311775
+
+# de nye resultater af 10 kombinationer som har den højeste R2 værdi
+#Komb_5_660 0.4422791
+#Komb_4_355 0.4409806
+#Komb_6_837 0.4396783
+#Komb_7_585 0.4373602
+#Komb_6_582 0.4368706
+#Komb_5_400 0.4363631
+#Komb_5_653 0.4361526
+#Komb_6_575 0.4347062
+#Komb_7_756 0.4333005
+#Komb_4_368 0.4318695
+
+
+## Dataframe med top10 indikatorerne
+stab_gns <- data_for_regression[, c("Realvækst", "Komb_5_660", "Komb_4_355", 
+                                    "Komb_6_837", "Komb_7_585" , "Komb_6_582", 
+                                    "Komb_5_400", "Komb_5_653", "Komb_6_575", 
+                                    "Komb_7_756", "Komb_4_368")]
+rownames(stab_gns) = NULL
+
+
+stab_df <- data.frame()
+
+# For-loop for at beregne R2 for hver kombinationskolonne over de angivne rækker (1:98 til 1:61)
+for (j in 2:11) { # Kolonner 2 til 11 er dine x-variabler
+  for (i in 98:59) {
+    # Opret en midlertidig dataframe med rækker fra 1 til i
+    temp_df <- stab_gns[1:i, c(1, j)]  # Vælger kun 'Realvækst' og den j'te indikator-kolonne
+    
+    # Kør lineær regression med 'Realvækst' som y og den valgte indikator som x
+    model <- lm(Realvækst ~ ., data = temp_df)
+    
+    # Beregn R² og gem værdien i matrixen
+    stab_df[99 - i, j - 1] <- summary(model)$r.squared
+  }
+}
+
+## Se dataframe og opdater kolonnenavne med kombinationstallet
+View(stab_df)
+colnames(stab_df) <- c("Komb_5_660", "Komb_4_355", 
+                       "Komb_6_837", "Komb_7_585", "Komb_6_582", 
+                       "Komb_5_400", "Komb_5_653", "Komb_6_575", 
+                       "Komb_7_756", "Komb_4_368")
+
+## Transponer så der kan laves rowMeans
+stab_df <- data.frame(t(stab_df))
+stab_gns <- rowMeans(stab_df)
+stab_df$Gns <- stab_gns
+
+## Beregn standardafvigelse for hver række i dataen
+stab_df$sd <- apply(stab_df[, 1:40], 1, sd)
+
+## Opret en stabilitetsscore, som er gennemsnitlige R2 / SD. Jo højere en score, jo bedre
+stab_df <- stab_df %>% 
+  mutate(Score = Gns / sd) %>% 
+  arrange(desc(Score)) ## Her sorterer jeg efter højeste score først
+
+## Højeste score er kombination 4_368
+Komb_4_368 <- kombinationer_liste[["komb_4"]][[368]]
+colnames(Komb_4_368)
+
+## Den "dårligste" i vores top 10 indikatorer, viser sig at være den mest stabile
+## Det er altså den kombination, som har den højeste R2 værdi, sammenlignet med standardafvigelsen
+
+### For alle kombinationer 
+
+#data frame for alle kombinationer 
+stab_gns <- data_for_regression  
+
+# Opret en tom data frame til at samle R2 resultaterne
+stab_df <- data.frame()
+
+# For-loop for at beregne R2 for hver indikator-kolonne 
+for (j in 2:ncol(stab_gns)) {  # Kolonne 2 til sidste kolonne af x-variabler
+  for (i in 98:59) {
+    # Opret en midlertidig dataframe med rækker fra 1 til i
+    temp_df <- stab_gns[1:i, c(1, j)]  # Vælger kun Realvækst og den j'te indikator-kolonne
+    
+    # Kør lineær regression med Realvækst som y og den valgte indikator som x
+    model <- lm(Realvækst ~ ., data = temp_df)
+    
+    # Beregn R2 og gem værdien i stab_df
+    stab_df[99 - i, j - 1] <- summary(model)$r.squared
+  }
+}
+
+# Opdater kolonnenavne med indikator-navnene
+colnames(stab_df) <- colnames(stab_gns)[2:ncol(stab_gns)]
+
+# Transponer data frame så den kan analyseres med rowMeans
+stab_df <- data.frame(t(stab_df))
+stab_gns <- rowMeans(stab_df)
+stab_df$Gns <- stab_gns
+
+# Beregn min og max for hver række
+stab_df$min <- apply(stab_df[, 1:40], 1, min)
+stab_df$max <- apply(stab_df[, 1:40], 1, max)
+
+# Opret en stabilitetsscore
+stab_df <- stab_df %>% 
+  mutate(Score = Gns/(max - min)) %>% 
+  arrange(desc(Score))  # Sortér efter højeste score først
+
+# Se data frame med resultaterne
+View(stab_df)
+
+stab_results <- stab_df[, 41:44]
+
+##############################
+plot(1:nrow(stab_df), stab_df$X1, type = "o", col = "blue", 
+     xlab = "Kombinationer", ylab = "R²-værdi", 
+     main = "R² for X1")
+
+# Hvis du vil plotte flere variabler i samme graf:
+matplot(1:10, stab_df[1:10, 1], type = "o", pch = 1, col = rainbow(10),
+        xlab = "Kombinationer", ylab = "R²-værdi", 
+        main = "R² for forskellige kombinationer loopet")
+
+
+
+
+###################################
+#### omvendt loop ####
+### For alle kombinationer 
+
+#data frame for alle kombinationer 
+stab_gns <- data_for_regression 
+
+# Opret en tom data frame til at samle R2 resultaterne
+stab_df <- data.frame()
+
+# For-loop for at beregne R2 for hver indikator-kolonne 
+for (j in 2:ncol(stab_gns)) {  # Kolonne 2 til sidste kolonne af x-variabler
+  for (i in 1:40) {
+    # Opret en midlertidig dataframe med rækker fra 1 til i
+    temp_df <- stab_gns[i:98, c(1, j)]  # Vælger kun Realvækst og den j'te indikator-kolonne
+    
+    # Kør lineær regression med Realvækst som y og den valgte indikator som x
+    model <- lm(Realvækst ~ ., data = temp_df)
+    
+    # Beregn R2 og gem værdien i stab_df
+    stab_df[i, j - 1] <- summary(model)$r.squared
+  }
+}
+
+# Opdater kolonnenavne med indikator-navnene
+colnames(stab_df) <- colnames(stab_gns)[2:ncol(stab_gns)]
+
+# Transponer data frame så den kan analyseres med rowMeans
+stab_df <- data.frame(t(stab_df))
+stab_gns <- rowMeans(stab_df)
+stab_df$Gns <- stab_gns
+
+# Beregn min og max for hver række
+stab_df$min <- apply(stab_df[, 1:40], 1, min)
+stab_df$max <- apply(stab_df[, 1:40], 1, max)
+
+# Opret en stabilitetsscore
+stab_df <- stab_df %>% 
+  mutate(Score = Gns/(max - min)) %>% 
+  arrange(desc(Score))  # Sortér efter højeste score først
+
+# Se data frame med resultaterne
+View(stab_df)
+
+stab_results <- stab_df[, 41:44]
+
+# Hvis du vil plotte flere variabler i samme graf:
+matplot(1:10, stab_df[1:10, 1], type = "o", pch = 1, col = rainbow(10),
+        xlab = "Kombinationer", ylab = "R²-værdi", 
+        main = "R² for forskellige kombinationer loopet")
+

@@ -1,0 +1,261 @@
+library(dkstat)
+library(tidyverse)
+library(pls)
+
+##### Henter data fra NKHC021 for at beregne realvæksten kvartalvis #######
+
+#1. Beregner realvæksten for perioden
+## Hent forbrugsdata via DST API
+Forbrug.meta <- dst_meta(table="NKHC021", lang="da")
+
+Forbrug.filter <- list(
+  FORMAAAL = "I alt",
+  PRISENHED = "2020-priser, kædede værdier",
+  SÆSON = "Sæsonkorrigeret",
+  Tid = "*")
+
+Forbrugdata <- dst_get_data(table = "NKHC021", query = Forbrug.filter)
+Forbrugdata <- Forbrugdata[,-c(1:3)]
+
+#udregner realvæskten fra kvartal til kvartal
+Forbrugdata$Realvækst <- (Forbrugdata$value / dplyr::lag(Forbrugdata$value, 4) - 1) * 100
+
+#ny dataframe i perioden 2000Q1 -2024 Q2
+Privatforbrug.periode <- as.data.frame(Forbrugdata[c(41:139),c(1,3)]) #tager for den udvalgte periode
+
+#Ændrer fra yyyy-mm-xx til yyyy-Q1
+Privatforbrug.periode$TID <- as.Date(Privatforbrug.periode$TID)  # Sørg for, at datoen er i Date format
+
+Privatforbrug.periode$TID <- paste0(year(Privatforbrug.periode$TID), "-Q", quarter(Privatforbrug.periode$TID))
+
+
+
+
+###### Henter data fra FORV1 for forbrugerforventtninger (forbrugertillidsindikator) og berenger kvartalvis gennemsnit #######
+
+#2. Korrelation og forklaringsgraf for FTI og realvækst
+#Finder data fra forbrugerforventninger i alle perioder
+alltables <- dst_get_tables(lang="da")
+dst_search("Forbrugerforventninger")
+
+FORV1.meta <- dst_meta(table = "FORV1", lang = "da")
+
+#liste med relevante filter-variabler.
+FORV1.filter <- list(
+  INDIKATOR = "*",
+  Tid = "*")
+
+FORV1Data <- dst_get_data(table = "FORV1", query = FORV1.filter, lang = "da")
+#INDIKATOR                       TID        value
+#1 Forbrugertillidsindikatoren 1974-10-01   -15
+#2 Forbrugertillidsindikatoren 1974-11-01    NA
+
+#Step 2.2: Data transformation: Dataframe med gns for kvartaler
+FORV1.wider <- pivot_wider(FORV1Data, names_from = INDIKATOR, values_from = value)
+FORV1 <- as.data.frame(FORV1.wider)
+
+#Sikrer at alle kolonner er numeriske undtagen dato som er sidste kolonne
+FORV1$TID <- as.Date(FORV1$TID) #laver årstal/kvartal til dato kolonne
+FORV1$TID <- paste(year(FORV1$TID), "Q", quarter(FORV1$TID), sep = "") #ændrer format i data-kolonne
+
+FORV1[, c(2:14)] <- lapply(FORV1[, c(2:14)], function(x) as.numeric(as.character(x))) #markerer col1:13 som numerisk
+
+gns.resultater <-list() # opretter liste til at gemme resultater i
+
+# Loop gennem hver af de 13 kolonner
+for (i in 2:14) {
+  # Beregn gennemsnit af FTI pr. kvartal for den i-te kolonne
+  FTI.gns <- aggregate(FORV1[, i] ~ TID, data = FORV1, FUN = function(x) round(mean(x, na.rm = TRUE), 2))
+  
+  # Gem resultaterne i en liste med navn baseret på kolonne-nummeret
+  gns.resultater[[paste0("FTI.gns", i)]] <- FTI.gns[, 2]  #Gem kun gennemsnitsværdierne (kolonne 2)
+}
+
+# Saml alle resultater i en ny dataframe
+FORV1.kvartal <- data.frame(TID2 = FTI.gns$TID, do.call(cbind, gns.resultater))
+
+#Tilføjer kolonne navne fra gamle data.frame
+Overskrifter <- c("Kvartal", colnames(FORV1[2:14]))
+colnames(FORV1.kvartal) <-Overskrifter
+
+#step 2.3: dataframe med realvækst og FTI for udvalgte periode
+FTI <- cbind.data.frame(Privatforbrug.periode,FORV1.kvartal[c(92:190),-1])
+colnames(FTI)[3] <- "Forbrugertillidsindikator"
+
+
+##### Opgave 2 #####
+
+#### opgave 2.1 ####
+
+Forvent <- dst_meta("FORV1")
+#### PCR test ####
+# benyt FTI dataen fra opgave 1 i OLA 3
+PCR_test <- pcr(Privatforbrug.periode$Realvækst~ FTI$`Familiens økonomiske situation i dag, sammenlignet med for et år siden`+
+                  FTI$`Familiens økonomiske  situation om et år, sammenlignet med i dag`+
+                  FTI$`Danmarks økonomiske situation i dag, sammenlignet med for et år siden`+
+                  FTI$`Danmarks økonomiske situation om et år, sammenlignet med i dag`+
+                  FTI$`Anskaffelse af større forbrugsgoder, fordelagtigt for øjeblikket`+
+                  FTI$`Priser i dag, sammenlignet med for et år siden`+
+                  FTI$`Priser om et år, sammenlignet med i dag`+
+                  FTI$`Arbejdsløsheden om et år, sammenlignet med i dag`+
+                  FTI$`Anskaffelse af større forbrugsgoder, inden for de næste 12 mdr.`+
+                  FTI$`Anser det som fornuftigt at spare op i den nuværende økonomiske situation`+
+                  FTI$`Regner med at kunne spare op i de kommende 12 måneder`+
+                  FTI$`Familiens økonomiske situation lige nu: kan spare/penge slår til/ bruger mere end man tjener`,
+                data=FTI , scale = TRUE , validation = "CV")
+
+summary(PCR_test)
+loadings.PCR_test <- PCR_test$loadings
+w.indicatiors.1 <- loadings.PCR_test[1:12]^2
+sum(w.indicatiors.1)
+# w.indicatiors.1 skriv det ind i console for at få nedenstående
+#  [1] 0.140055146 0.121027272 0.104276055 0.042753602 0.118379027 0.112041132 0.002676622 0.067823154
+#  [9] 0.142635573 0.001338596 0.065041392 0.081952429
+# det ovensående er de gamle tal 
+
+# dette er de nye tal med Q4 regnet oveni 
+# [1] 0.140214935 0.120705235 0.104026182 0.043604906 0.118524176 0.112370907 0.002439158 0.067880092
+# [9] 0.141758312 0.001355939 0.065267687 0.081852474
+
+
+#### Opgave 2.2 ####
+# Hvilke 3 spørgsmål havde den højeste vægt og giver de analytisk mening?
+
+# Spørgsmål 1, 2 og 9 har den største vægt 
+# SPG 1.  0.140055146, 14%
+# SPG 2.  0.121027272, 12%
+# SPG 9.  0.142635573, 14%
+
+#vægtene er afhængig af hvor meget spørgsmålene “svinger”. 
+#de tre udvalgte spørgsmål er derfor dem der svinger mest
+#kun spg om egen økonomi - svinger mere end danmarks økonomiske - kender sin egen økonomi bedre
+#alle er mikroøkonomi spørgsmål - forklarer bedst 
+
+
+#Med afsæt i jeres vægte fra opgave 2.1 skal I beregne den årlige realvækst i husholdningernes 
+#forbrugsudgift for 3. kvartal 2023. Hvad er årsagen til I ikke helt tror på jeres beregnede 
+#årlige realvækst i husholdningernes forbrugsudgift for 3. kvartal 2023? 
+#Hvad skyldes det underlige resultat?
+
+#laver en samlede dataframe med alle indikatorer og realvækst
+df <- FTI[, c(
+  'Familiens økonomiske situation i dag, sammenlignet med for et år siden',
+  'Familiens økonomiske  situation om et år, sammenlignet med i dag',
+  'Danmarks økonomiske situation i dag, sammenlignet med for et år siden',
+  'Danmarks økonomiske situation om et år, sammenlignet med i dag',
+  'Anskaffelse af større forbrugsgoder, fordelagtigt for øjeblikket',
+  'Priser i dag, sammenlignet med for et år siden',
+  'Priser om et år, sammenlignet med i dag',
+  'Arbejdsløsheden om et år, sammenlignet med i dag',
+  'Anskaffelse af større forbrugsgoder, inden for de næste 12 mdr.',
+  'Anser det som fornuftigt at spare op i den nuværende økonomiske situation',
+  'Regner med at kunne spare op i de kommende 12 måneder',
+  'Familiens økonomiske situation lige nu: kan spare/penge slår til/ bruger mere end man tjener'
+)]
+
+df$Realvækst <- Privatforbrug.periode$Realvækst #tilføjer realvækst til dataframen
+
+pcr_model <- pcr(Realvækst ~ ., data = df, scale = TRUE, validation = "CV") #PCR test
+
+
+Q4_2024 <- FORV1.kvartal[190, 2:14] #alle Q4 2024 indikatorer - ikke vægtet
+
+
+Q4.forudsigelse <- predict(pcr_model, newdata = Q4_2024, ncomp = 1)
+print(Q4.forudsigelse) #0.2711295
+
+
+
+summary(pcr_model)
+
+#ganger vægtene ind på alle værdier
+# Antag at din PCR-model er gemt som pcr.fit
+library(pls)
+
+# Udtræk loadings og scores fra pcr.fit
+loadings <- PCR_test$loadings[1:12]^2   # Loadings matrix (12 vægte)
+værdier <- FTI[,-c(1:2)] #spørgsmåls værdier - model i pcr fit -Værdier dataframe (99 x 12)
+
+
+# tester enkelt
+resultat <- værdier$`Familiens økonomiske situation i dag, sammenlignet med for et år siden` %*% t(loadings[1])   # Husk at transponere loadings
+
+FORV1.Q4 <- FORV1.kvartal[c(92:190),c( 2:14)]
+# Opret en tom dataframe til resultaterne
+resultater <- as.data.frame(matrix(nrow = nrow(FORV1.Q4), ncol = ncol(FORV1.Q4)))
+
+# Loop over hver kolonne i værdier
+for (j in 1:ncol(FORV1.Q4)) {
+  # Multiplicer den j'te kolonne med den tilsvarende loading
+  resultater[, j] <- FORV1.Q4[, j] * loadings[j]
+}
+
+# Opdater kolonnenavne
+colnames(resultater) <- colnames(FORV1.Q4)
+
+# Hvis du vil se resultaterne
+print(resultater)
+unlist(resultater)
+
+#resultater er alle spg ganget om på vægtene
+#lav det til en samlet indikator
+resultater$PCA.FTI<- rowSums(resultater)
+
+#fjerner rækker 
+Q4 <- data.frame(resultater[99,13])
+Q4.2 <- data.frame(resultater[99,-13]) #til multipel test
+
+
+resultater$Realvækst <- Privatforbrug.periode$Realvækst#tilføjer realvækst
+PCA.lm <- lm(Realvækst~PCA.FTI, data = resultater)
+PCA.lm$coefficients
+#(Intercept)     PCA.FTI 
+#-0.7442317   0.6017386 
+
+#sikrer at kolonnenacne er ens
+colnames(Q4) <- c("PCA.FTI")
+
+predict(PCA.lm, newdata = Q4, type = "response")
+#1.374585 
+
+
+#PCA predict version
+test <- predict(pcr.fit, newdata = Q4)
+
+#Datasæt med q4 alle indikatorer 
+#Q4.2 <- data.frame(resultater[99,-13]) #til multipel test
+
+# Sørg for, at kolonnerne i Q4_data har de samme navne som i træningsdataene.
+Q4.2 <- as.data.frame(Q4.2)
+colnames(Q4.2) <- colnames(Forv1.periode[, -c(1:2)])
+
+# Forudsigelse for Q4 ved hjælp af PCR-modellen
+Q4_prediction <- predict(pcr.fit, newdata = Q4.2, ncomp = 1)
+
+# Udskriv resultatet
+print(Q4_prediction)
+
+print(Q4.2)
+
+
+# Forudsigelse for Q4 ved hjælp af PCR-modellen
+Q4_prediction <- predict(pcr.fit, newdata = Q4, ncomp = 1)
+
+
+#### opgave 2.4 ####
+## Find det samlede privatforbrug i 2015
+236070+238415+242163+243380
+## 960028
+
+## Find det samlede privatforbrug i 2016
+47503+248218+248493+251200
+## 995414
+
+## Find væksten
+(995414-960028)/960028*100
+## 3.685934%
+
+
+
+
+
